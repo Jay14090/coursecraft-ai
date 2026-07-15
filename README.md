@@ -126,11 +126,12 @@ The frontend includes server-render smoke tests and a health-route test. The bac
 ## Deployment plan
 
 - Web: GitHub Pages through `.github/workflows/deploy-pages.yml` and Vinext static export.
-- API: Railway using `backend/Dockerfile`, with `COURSECRAFT_API_URL` configured as a GitHub repository variable.
+- API: Google Cloud Run using `backend/Dockerfile`, with scale-to-zero, a one-instance ceiling, and `COURSECRAFT_API_URL` configured as a GitHub repository variable.
+- Preview persistence: a private Google Cloud Storage object accessed only by the Cloud Run service account.
 - Database, Auth, Storage, vector search: Supabase.
 - AI: Groq for fast inference, with OpenRouter as a drop-in alternative.
 
-The deployment workflow keeps frontend configuration in GitHub repository variables and backend secrets in Railway.
+The deployment workflow keeps frontend configuration in GitHub repository variables and the Groq key in Google Secret Manager. No server-side secret is bundled into the GitHub Pages app.
 
 ## Demo presentation
 

@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     demo_mode: bool = True
     preview_data_path: str | None = None
+    preview_gcs_bucket: str | None = None
+    preview_gcs_object: str = "coursecraft/preview-data.json"
     max_pdf_mb: int = Field(default=50, ge=1, le=200)
 
     @property

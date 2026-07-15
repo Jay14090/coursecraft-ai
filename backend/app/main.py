@@ -15,7 +15,9 @@ from .store import demo_store
 
 
 settings = get_settings()
-if settings.preview_data_path:
+if settings.preview_gcs_bucket:
+    demo_store.configure_gcs(settings.preview_gcs_bucket, settings.preview_gcs_object)
+elif settings.preview_data_path:
     demo_store.configure_persistence(settings.preview_data_path)
 provider = AIProvider(settings)
 app = FastAPI(title=settings.app_name, version="1.1.0", docs_url="/docs", redoc_url="/redoc")

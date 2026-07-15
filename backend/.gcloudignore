@@ -1,0 +1,8 @@
+.gcloudignore
+.git
+.gitignore
+__pycache__/
+*.py[cod]
+.pytest_cache/
+tests/
+requirements-dev.txt
