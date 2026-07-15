@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 from threading import RLock
+from typing import Any
 from uuid import uuid4
 
 
@@ -21,7 +22,15 @@ class DemoStore:
     def __init__(self) -> None:
         self._lock = RLock()
         self._persist_path: Path | None = None
+        self._cloud_blob: Any | None = None
         self.reset(seed=True)
+
+    def _restore(self, payload: dict) -> None:
+        self.documents = payload.get("documents", {})
+        self.courses = payload.get("courses", {})
+        self.progress = payload.get("progress", {})
+        self.messages = payload.get("messages", [])
+        self.attempts = payload.get("attempts", [])
 
     def configure_persistence(self, path: str) -> None:
         with self._lock:
@@ -29,29 +38,47 @@ class DemoStore:
             if self._persist_path.exists():
                 try:
                     payload = json.loads(self._persist_path.read_text(encoding="utf-8"))
-                    self.documents = payload.get("documents", {})
-                    self.courses = payload.get("courses", {})
-                    self.progress = payload.get("progress", {})
-                    self.messages = payload.get("messages", [])
-                    self.attempts = payload.get("attempts", [])
+                    self._restore(payload)
                     return
                 except (OSError, json.JSONDecodeError, TypeError):
                     pass
             self._persist()
 
+    def configure_cloud_blob(self, blob: Any) -> None:
+        """Attach a small JSON object store used by serverless preview deployments."""
+        with self._lock:
+            self._cloud_blob = blob
+            try:
+                if blob.exists():
+                    self._restore(json.loads(blob.download_as_text(encoding="utf-8")))
+                    return
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                pass
+            self._persist()
+
+    def configure_gcs(self, bucket_name: str, object_name: str) -> None:
+        from google.cloud import storage
+
+        client = storage.Client()
+        self.configure_cloud_blob(client.bucket(bucket_name).blob(object_name))
+
     def _persist(self) -> None:
-        if not self._persist_path:
+        if not self._persist_path and not self._cloud_blob:
             return
-        self._persist_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self._persist_path.with_suffix(self._persist_path.suffix + ".tmp")
-        temporary.write_text(json.dumps({
+        serialized = json.dumps({
             "documents": self.documents,
             "courses": self.courses,
             "progress": self.progress,
             "messages": self.messages,
             "attempts": self.attempts,
-        }, ensure_ascii=False), encoding="utf-8")
-        temporary.replace(self._persist_path)
+        }, ensure_ascii=False)
+        if self._persist_path:
+            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self._persist_path.with_suffix(self._persist_path.suffix + ".tmp")
+            temporary.write_text(serialized, encoding="utf-8")
+            temporary.replace(self._persist_path)
+        if self._cloud_blob:
+            self._cloud_blob.upload_from_string(serialized, content_type="application/json")
 
     def reset(self, *, seed: bool = True) -> None:
         with self._lock:

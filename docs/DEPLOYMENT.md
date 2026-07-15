@@ -1,7 +1,5 @@
 # Deployment handoff
 
-Deployment is intentionally paused until approval.
-
 ## 1. Supabase
 
 1. Create a Supabase project.
@@ -16,11 +14,21 @@ Create a Groq or OpenRouter API key. Groq is the recommended default for fast de
 
 ## 3. Backend
 
-Create a Render web service from `render.yaml` or deploy `backend/Dockerfile` to Railway/Fly.io. Add all backend secrets, set `DEMO_MODE=false`, and verify `/health` and `/docs`.
+Deploy `backend/Dockerfile` to Google Cloud Run. Store `GROQ_API_KEY` in Secret Manager and run the service with a dedicated service account. For the public preview, set `DEMO_MODE=true`, `PREVIEW_GCS_BUCKET`, and `PREVIEW_GCS_OBJECT`; cap the service at one instance so the compact JSON preview repository has a single writer. Use a Cloud SQL or Supabase-backed repository before lifting that ceiling for production traffic.
+
+Recommended guardrails:
+
+- Request-based billing with `--min-instances=0`.
+- `--max-instances=1`, `--concurrency=4`, and a 300-second request timeout.
+- A private, uniform-access Cloud Storage bucket with only the runtime service account granted object access.
+- `FRONTEND_URL=https://jay14090.github.io` so browser API access is limited to the GitHub Pages origin.
+- A billing budget alert for the dedicated Google Cloud project.
+
+After deployment, verify `/health`, `/docs`, `/api/v1/courses`, CORS, a real PDF upload, AI generation, chat, progress, and quiz submission against the Cloud Run URL.
 
 ## 4. Frontend
 
-Set `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SUPABASE_URL`, and `NEXT_PUBLIC_SUPABASE_ANON_KEY`. Build and publish only after the API and allowed CORS origin use the final domains.
+Set the GitHub repository variables `COURSECRAFT_API_URL`, `NEXT_PUBLIC_SUPABASE_URL`, and `NEXT_PUBLIC_SUPABASE_ANON_KEY`. The Pages workflow maps `COURSECRAFT_API_URL` into `NEXT_PUBLIC_API_URL`, performs a static export under `/coursecraft-ai`, and deploys it with GitHub Actions.
 
 ## 5. Acceptance checklist
 

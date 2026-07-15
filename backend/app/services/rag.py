@@ -30,5 +30,18 @@ async def answer_question(provider: AIProvider, question: str, chunks: list[dict
     context = "\n\n".join(f"[Page {item['page']}] {item['text']}" for item in matches)
     system = "You are a patient learning companion. Answer only from the supplied sources. Cite pages inline. Say when evidence is insufficient. End with one useful follow-up question."
     history_text = "\n".join(f"{item.get('role')}: {item.get('content')}" for item in history[-8:])
-    answer = await provider.complete(system, f"Conversation:\n{history_text}\n\nSources:\n{context}\n\nQuestion: {question}")
+    try:
+        answer = await provider.complete(
+            system,
+            f"Conversation:\n{history_text}\n\nSources:\n{context}\n\nQuestion: {question}",
+            max_tokens=900,
+        )
+    except RuntimeError:
+        # Keep the public preview useful during a transient provider outage or
+        # rate limit while remaining strictly grounded in retrieved evidence.
+        evidence = []
+        for item in matches[:2]:
+            excerpt = re.sub(r"\s+", " ", item["text"]).strip()[:420]
+            evidence.append(f"{excerpt} [Source: p. {item['page']}]")
+        answer = "The strongest available source evidence says:\n\n" + "\n\n".join(evidence)
     return {"answer": answer, "citations": [{"page": item["page"], "excerpt": item["text"][:180]} for item in matches[:3]], "suggestions": ["Explain with an analogy", "Quiz me on this", "Show the source context"]}

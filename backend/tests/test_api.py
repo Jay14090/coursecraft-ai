@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from reportlab.pdfgen import canvas
 
-from app.main import app
+from app.main import app, provider
 from app.store import DemoStore, demo_store
 
 
@@ -143,6 +143,24 @@ def test_source_grounded_chat_and_history() -> None:
     assert [item["role"] for item in messages] == ["user", "assistant"]
 
 
+def test_chat_stays_grounded_when_the_ai_provider_is_rate_limited(monkeypatch) -> None:
+    async def unavailable(*args, **kwargs) -> str:
+        raise RuntimeError("provider rate limited")
+
+    monkeypatch.setattr(provider, "complete", unavailable)
+    detail = first_course_detail()
+    response = client.post(
+        "/api/v1/chat",
+        json={"course_id": detail["id"], "message": "How does retrieval work?", "history": []},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "source evidence" in payload["answer"].lower()
+    assert "Source: p." in payload["answer"]
+    assert payload["citations"]
+
+
 def test_search_finds_course_and_lesson_content() -> None:
     response = client.get("/api/v1/search", params={"q": "retrieval"})
     assert response.status_code == 200
@@ -212,3 +230,41 @@ def test_preview_repository_survives_a_process_restart(tmp_path) -> None:
     assert restored is not None
     assert restored["filename"] == "persistent.pdf"
     assert data_path.exists()
+
+
+def test_cloud_preview_repository_survives_a_serverless_restart() -> None:
+    class MemoryBlob:
+        payload: str | None = None
+
+        def exists(self) -> bool:
+            return self.payload is not None
+
+        def download_as_text(self, encoding: str = "utf-8") -> str:
+            assert encoding == "utf-8"
+            assert self.payload is not None
+            return self.payload
+
+        def upload_from_string(self, payload: str, content_type: str) -> None:
+            assert content_type == "application/json"
+            self.payload = payload
+
+    blob = MemoryBlob()
+    first = DemoStore()
+    first.reset(seed=False)
+    first.configure_cloud_blob(blob)
+    created = first.create_document(
+        user_id="demo-user",
+        filename="cloud-persistent.pdf",
+        size_bytes=640,
+        page_count=1,
+        status="processed",
+        text="Cloud durable state",
+        chunks=[{"text": "Cloud durable state", "page": 1, "position": 0}],
+    )
+
+    restarted = DemoStore()
+    restarted.configure_cloud_blob(blob)
+
+    restored = restarted.get_document(created["id"], "demo-user")
+    assert restored is not None
+    assert restored["filename"] == "cloud-persistent.pdf"
