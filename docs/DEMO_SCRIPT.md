@@ -8,13 +8,13 @@ Start on **Overview**. Briefly point out resume state, learning streak, time, qu
 
 ## 2. Create a course (60 seconds)
 
-Select **Create from PDF** → **Try the demo document** → **Balanced** → **Generate course**.
+Select **Create from PDF** → **Try the demo document** → **Balanced** → choose a **Course language** → **Generate course**.
 
 Explain the hidden pipeline while the progress state runs: page-aware extraction, semantic chunking, structured generation, citations, quizzes, and pgvector indexing.
 
 ## 3. Show the course library (45 seconds)
 
-Open **My courses**. Point out persistent progress, time estimates, difficulty, and cross-course search. Mention that every record is user-owned through Supabase Auth and row-level security.
+Open **My courses**. Point out persistent progress, time estimates, difficulty, semantic search, and the dedicated Learning history. Mention Supabase JWT ownership plus Firestore/GCS persistence.
 
 ## 4. Teach inside the learning room (2 minutes)
 
@@ -35,11 +35,11 @@ Call out that the answer is retrieved from the uploaded PDF, carries page citati
 
 ## 6. Complete a checkpoint (60 seconds)
 
-Select **Take chapter quiz**, answer the three questions, and show the result state. Mention the full API supports multiple choice, true/false, and short-answer formats with explanations and stored attempts.
+Select **Take chapter quiz**, demonstrate multiple choice, true/false, and short answer, then show the score, correct-answer review, explanations, and stored attempt.
 
 ## 7. Show bonus depth (45 seconds)
 
-Open **AI studio**. Show cross-library questioning, flashcards, translation/simplification, audio lessons, and exam sprints. These are intentionally presented as workflows instead of scattered novelty features.
+Open **AI studio**. Show the RAG/vector badges, flashcards, PDF summary, mind map, AI diagram, translation, audio, Markdown/JSON export, and completion-gated PDF certificate.
 
 ## 8. Close on engineering quality (30 seconds)
 

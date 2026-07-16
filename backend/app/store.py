@@ -23,6 +23,7 @@ class DemoStore:
         self._lock = RLock()
         self._persist_path: Path | None = None
         self._cloud_blob: Any | None = None
+        self._firestore_document: Any | None = None
         self.reset(seed=True)
 
     def _restore(self, payload: dict) -> None:
@@ -62,8 +63,38 @@ class DemoStore:
         client = storage.Client()
         self.configure_cloud_blob(client.bucket(bucket_name).blob(object_name))
 
+    def configure_firestore(self, collection_name: str, document_name: str) -> None:
+        """Mirror durable learning metadata to a managed document database.
+
+        Raw PDF text and vector chunks stay in object storage so the Firestore
+        document remains comfortably below its size limit.
+        """
+        from google.cloud import firestore
+
+        self._firestore_document = firestore.Client().collection(collection_name).document(document_name)
+        self._persist()
+
+    def configure_firestore_document(self, document: Any) -> None:
+        self._firestore_document = document
+        self._persist()
+
+    def _database_snapshot(self) -> dict:
+        documents = {
+            identifier: {key: value for key, value in record.items() if key not in {"text", "chunks"}}
+            for identifier, record in self.documents.items()
+        }
+        return {
+            "documents": documents,
+            "courses": self.courses,
+            "progress": self.progress,
+            "messages": self.messages[-500:],
+            "attempts": self.attempts[-500:],
+            "updated_at": _now(),
+            "schema_version": 1,
+        }
+
     def _persist(self) -> None:
-        if not self._persist_path and not self._cloud_blob:
+        if not self._persist_path and not self._cloud_blob and not self._firestore_document:
             return
         serialized = json.dumps({
             "documents": self.documents,
@@ -79,6 +110,8 @@ class DemoStore:
             temporary.replace(self._persist_path)
         if self._cloud_blob:
             self._cloud_blob.upload_from_string(serialized, content_type="application/json")
+        if self._firestore_document:
+            self._firestore_document.set(self._database_snapshot())
 
     def reset(self, *, seed: bool = True) -> None:
         with self._lock:
@@ -208,7 +241,9 @@ class DemoStore:
                         "title": lesson.get("title") or f"Lesson {lesson_position + 1}",
                         "content_markdown": lesson.get("content_markdown", ""),
                         "takeaways": lesson.get("takeaways", []),
+                        "important_notes": lesson.get("important_notes", []),
                         "examples": lesson.get("examples", []),
+                        "summary": lesson.get("summary", ""),
                         "source_pages": lesson.get("source_pages", []),
                         "estimated_minutes": max(1, int(lesson.get("estimated_minutes", 10))),
                     })

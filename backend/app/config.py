@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     preview_data_path: str | None = None
     preview_gcs_bucket: str | None = None
     preview_gcs_object: str = "coursecraft/preview-data.json"
+    preview_firestore_collection: str | None = None
+    preview_firestore_document: str = "preview-state"
     max_pdf_mb: int = Field(default=50, ge=1, le=200)
 
     @property

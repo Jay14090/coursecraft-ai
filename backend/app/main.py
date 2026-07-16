@@ -1,16 +1,20 @@
 import asyncio
+import json
 from statistics import mean
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from .auth import CurrentUser, get_current_user
 from .config import get_settings
-from .schemas import ChatRequest, FlashcardRequest, GenerateCourseRequest, HealthResponse, ProgressUpdate, QuizAttemptRequest, QuizRequest
+from .schemas import CertificateRequest, ChatRequest, CourseToolRequest, FlashcardRequest, GenerateCourseRequest, HealthResponse, ProgressUpdate, QuizAttemptRequest, QuizRequest
 from .services.ai import AIProvider
 from .services.course_generator import generate_course
 from .services.pdf import chunk_pages, extract_pdf
-from .services.rag import answer_question
+from .services.learning_tools import build_diagram, build_mind_map, certificate_pdf, export_json, export_markdown, summarize_course
+from .services.rag import answer_question, stream_answer
+from .services.semantic import cosine, embed_text, with_embeddings
 from .store import demo_store
 
 
@@ -19,8 +23,10 @@ if settings.preview_gcs_bucket:
     demo_store.configure_gcs(settings.preview_gcs_bucket, settings.preview_gcs_object)
 elif settings.preview_data_path:
     demo_store.configure_persistence(settings.preview_data_path)
+if settings.preview_firestore_collection:
+    demo_store.configure_firestore(settings.preview_firestore_collection, settings.preview_firestore_document)
 provider = AIProvider(settings)
-app = FastAPI(title=settings.app_name, version="1.1.0", docs_url="/docs", redoc_url="/redoc")
+app = FastAPI(title=settings.app_name, version="1.2.0", docs_url="/docs", redoc_url="/redoc")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_url],
@@ -79,6 +85,7 @@ async def health() -> HealthResponse:
         service=settings.app_name,
         mode="preview" if settings.demo_mode else "live",
         ai_provider=settings.llm_provider,
+        persistence="firestore+gcs" if settings.preview_firestore_collection and settings.preview_gcs_bucket else "gcs" if settings.preview_gcs_bucket else "local",
     )
 
 
@@ -103,7 +110,7 @@ async def upload_document(file: UploadFile = File(...), user: CurrentUser = Depe
         raise HTTPException(status_code=422, detail="The PDF is encrypted, damaged, or could not be read") from exc
     if extracted.page_count == 0 or not extracted.text.strip():
         raise HTTPException(status_code=422, detail="No readable text was found in this PDF. Scanned PDFs require OCR.")
-    chunks = chunk_pages(extracted.pages)
+    chunks = with_embeddings(chunk_pages(extracted.pages))
     record = demo_store.create_document(
         user_id=user.id,
         filename=filename,
@@ -191,6 +198,30 @@ async def chat(request: ChatRequest, user: CurrentUser = Depends(get_current_use
     return response
 
 
+@app.post(f"{settings.api_prefix}/chat/stream", tags=["ai"])
+async def chat_stream(request: ChatRequest, user: CurrentUser = Depends(get_current_user)) -> StreamingResponse:
+    course = demo_store.get_course(request.course_id, user.id)
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+    document = demo_store.get_document(course["document_id"], user.id)
+    if not document or not document.get("chunks"):
+        raise HTTPException(status_code=409, detail="Course source is not ready for questions")
+
+    async def events():
+        parts: list[str] = []
+        citations: list[dict] = []
+        async for token, token_citations in stream_answer(provider, request.message, document["chunks"], request.history):
+            parts.append(token)
+            citations = token_citations
+            yield f"event: token\ndata: {json.dumps({'token': token})}\n\n"
+        answer = "".join(parts).strip()
+        demo_store.add_message(user_id=user.id, course_id=request.course_id, role="user", content=request.message, citations=[])
+        demo_store.add_message(user_id=user.id, course_id=request.course_id, role="assistant", content=answer, citations=citations)
+        yield f"event: complete\ndata: {json.dumps({'answer': answer, 'citations': citations})}\n\n"
+
+    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
 @app.post(f"{settings.api_prefix}/quizzes/generate", tags=["ai"])
 async def generate_quiz(request: QuizRequest, user: CurrentUser = Depends(get_current_user)) -> dict:
     located = demo_store.find_chapter(request.chapter_id, user.id)
@@ -227,8 +258,23 @@ async def generate_quiz(request: QuizRequest, user: CurrentUser = Depends(get_cu
             "explanation": "Citations connect claims to the supporting source passages.",
             "source_pages": pages[:3],
         },
+        {
+            "id": f"{chapter['id']}-4",
+            "format": "short_answer",
+            "question": f"In one phrase, what keeps answers in “{topic}” connected to the source?",
+            "options": [],
+            "answer": "source citations",
+            "accepted_answers": ["citations", "source citations", "source evidence", "grounding"],
+            "explanation": "Source citations and grounded evidence make generated claims inspectable.",
+            "source_pages": pages[:3],
+        },
     ]
-    repeated = (questions * ((request.question_count + len(questions) - 1) // len(questions)))[: request.question_count]
+    enabled = [item for item in questions if item["format"] in request.formats]
+    repeated = []
+    for position in range(request.question_count):
+        item = dict(enabled[position % len(enabled)])
+        item["id"] = f"{item['id']}-{position + 1}"
+        repeated.append(item)
     return {"chapter_id": request.chapter_id, "title": f"{topic} checkpoint", "questions": repeated}
 
 
@@ -248,14 +294,22 @@ async def save_quiz_attempt(request: QuizAttemptRequest, user: CurrentUser = Dep
 @app.get(f"{settings.api_prefix}/search", tags=["learning"])
 async def search_library(q: str = Query(min_length=2, max_length=120), user: CurrentUser = Depends(get_current_user)) -> dict:
     needle = q.casefold()
+    query_vector = embed_text(q)
     matches: list[dict] = []
     for course in demo_store.list_courses(user.id):
-        if needle in f"{course.get('title', '')} {course.get('description', '')}".casefold():
-            matches.append({"type": "course", "course_id": course["id"], "title": course["title"], "excerpt": course["description"][:180]})
+        course_text = f"{course.get('title', '')} {course.get('description', '')} {' '.join(course.get('objectives', []))}"
+        course_score = cosine(query_vector, embed_text(course_text)) + (0.8 if needle in course_text.casefold() else 0)
+        if course_score > 0.05:
+            matches.append({"type": "course", "course_id": course["id"], "title": course["title"], "excerpt": course["description"][:180], "score": round(course_score, 4)})
         for chapter in course.get("chapters", []):
+            chapter_text = f"{chapter.get('title', '')} {chapter.get('summary', '')}"
+            chapter_score = cosine(query_vector, embed_text(chapter_text)) + (0.8 if needle in chapter_text.casefold() else 0)
+            if chapter_score > 0.05:
+                matches.append({"type": "chapter", "course_id": course["id"], "chapter_id": chapter["id"], "title": chapter["title"], "excerpt": chapter.get("summary", "")[:180], "score": round(chapter_score, 4)})
             for lesson in chapter.get("lessons", []):
                 haystack = f"{lesson.get('title', '')} {lesson.get('content_markdown', '')}".casefold()
-                if needle in haystack:
+                lesson_score = cosine(query_vector, embed_text(haystack)) + (0.8 if needle in haystack else 0)
+                if lesson_score > 0.05:
                     matches.append({
                         "type": "lesson",
                         "course_id": course["id"],
@@ -263,8 +317,10 @@ async def search_library(q: str = Query(min_length=2, max_length=120), user: Cur
                         "title": lesson["title"],
                         "chapter": chapter["title"],
                         "excerpt": lesson.get("content_markdown", "").replace("#", "")[:180],
+                        "score": round(lesson_score, 4),
                     })
-    return {"query": q, "count": len(matches), "results": matches[:30]}
+    matches.sort(key=lambda item: item["score"], reverse=True)
+    return {"query": q, "count": len(matches), "mode": "semantic+keyword", "results": matches[:30]}
 
 
 @app.get(f"{settings.api_prefix}/history", tags=["learning"])
@@ -299,6 +355,38 @@ async def generate_flashcards(request: FlashcardRequest, user: CurrentUser = Dep
         raise HTTPException(status_code=409, detail="No lesson content is available for flashcards")
     repeated = (cards * ((request.count + len(cards) - 1) // len(cards)))[: request.count]
     return {"course_id": request.course_id, "cards": repeated}
+
+
+@app.post(f"{settings.api_prefix}/ai/summary", tags=["ai"])
+async def course_summary_tool(request: CourseToolRequest, user: CurrentUser = Depends(get_current_user)) -> dict:
+    return summarize_course(_owned_course(request.course_id, user.id))
+
+
+@app.post(f"{settings.api_prefix}/ai/mind-map", tags=["ai"])
+async def course_mind_map(request: CourseToolRequest, user: CurrentUser = Depends(get_current_user)) -> dict:
+    return build_mind_map(_owned_course(request.course_id, user.id))
+
+
+@app.post(f"{settings.api_prefix}/ai/diagram", tags=["ai"])
+async def course_diagram(request: CourseToolRequest, user: CurrentUser = Depends(get_current_user)) -> dict:
+    return build_diagram(_owned_course(request.course_id, user.id))
+
+
+@app.get(f"{settings.api_prefix}/courses/{{course_id}}/export", tags=["courses"])
+async def export_course(course_id: str, format: str = Query(default="markdown", pattern="^(markdown|json)$"), user: CurrentUser = Depends(get_current_user)) -> Response:
+    course = _owned_course(course_id, user.id)
+    if format == "json":
+        return Response(export_json(course), media_type="application/json", headers={"Content-Disposition": f'attachment; filename="coursecraft-{course_id}.json"'})
+    return Response(export_markdown(course), media_type="text/markdown; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="coursecraft-{course_id}.md"'})
+
+
+@app.post(f"{settings.api_prefix}/courses/{{course_id}}/certificate", tags=["learning"])
+async def create_certificate(course_id: str, request: CertificateRequest, user: CurrentUser = Depends(get_current_user)) -> Response:
+    course = _owned_course(course_id, user.id)
+    if course["summary"]["progress_percent"] < 100:
+        raise HTTPException(status_code=409, detail="Complete every lesson to unlock the certificate")
+    payload = certificate_pdf(course, request.learner_name or user.name or user.email or "CourseCraft learner")
+    return Response(payload, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="coursecraft-certificate-{course_id}.pdf"'})
 
 
 @app.get(f"{settings.api_prefix}/dashboard", tags=["learning"])
