@@ -322,6 +322,8 @@ def test_complete_bonus_tool_suite_and_exports() -> None:
         response = client.post(f"/api/v1/ai/{endpoint}", json={"course_id": course_id})
         assert response.status_code == 200
         assert response.json()[key]
+        if endpoint == "summary":
+            assert "## Chapter map\n\n- " in response.json()["markdown"]
     markdown = client.get(f"/api/v1/courses/{course_id}/export", params={"format": "markdown"})
     assert markdown.status_code == 200
     assert markdown.headers["content-type"].startswith("text/markdown")
