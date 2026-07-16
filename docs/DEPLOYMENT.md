@@ -14,13 +14,13 @@ Create a Groq or OpenRouter API key. Groq is the recommended default for fast de
 
 ## 3. Backend
 
-Deploy `backend/Dockerfile` to Google Cloud Run. Store `GROQ_API_KEY` in Secret Manager and run the service with a dedicated service account. For the public preview, set `DEMO_MODE=true`, `PREVIEW_GCS_BUCKET`, and `PREVIEW_GCS_OBJECT`; cap the service at one instance so the compact JSON preview repository has a single writer. Use a Cloud SQL or Supabase-backed repository before lifting that ceiling for production traffic.
+Deploy `backend/Dockerfile` to Google Cloud Run. Store `GROQ_API_KEY` in Secret Manager and run the service with a dedicated service account. For the public preview, set `DEMO_MODE=true`, `PREVIEW_GCS_BUCKET`, `PREVIEW_GCS_OBJECT`, `PREVIEW_FIRESTORE_COLLECTION`, and `PREVIEW_FIRESTORE_DOCUMENT`. GCS stores raw PDF/chunk/vector state; Firestore mirrors queryable learning metadata.
 
 Recommended guardrails:
 
 - Request-based billing with `--min-instances=0`.
 - `--max-instances=1`, `--concurrency=4`, and a 300-second request timeout.
-- A private, uniform-access Cloud Storage bucket with only the runtime service account granted object access.
+- A private, uniform-access Cloud Storage bucket and Firestore database with only the runtime service account granted data access.
 - `FRONTEND_URL=https://jay14090.github.io` so browser API access is limited to the GitHub Pages origin.
 - A billing budget alert for the dedicated Google Cloud project.
 

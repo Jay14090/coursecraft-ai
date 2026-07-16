@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  Award,
   Bell,
   BookOpen,
   Bot,
@@ -14,12 +15,15 @@ import {
   Clock,
   Command,
   FileText,
+  Download,
   Flame,
   Gauge,
   GraduationCap,
+  GitBranch,
   Headphones,
   HelpCircle,
   Home,
+  History,
   Languages,
   Library,
   LoaderCircle,
@@ -37,7 +41,6 @@ import {
   Trash2,
   Trophy,
   Upload,
-  Volume2,
   X,
   Zap,
 } from "lucide-react";
@@ -50,12 +53,17 @@ import {
   type CourseSummary,
   type DashboardMetrics,
   type Flashcard,
+  type CourseDiagram,
+  type CourseSummaryTool,
+  type LearningHistory,
+  type MindMap,
   type QuizPayload,
+  type SearchResult,
   coursecraftApi,
 } from "@/lib/api";
 import { createSamplePdf } from "@/lib/sample-pdf";
 
-type View = "dashboard" | "courses" | "course" | "ai-lab";
+type View = "dashboard" | "courses" | "course" | "ai-lab" | "history";
 type UploadStage = "idle" | "selected" | "uploading" | "generating" | "ready";
 type UtilityPanel = "help" | "settings" | "notifications" | "plan" | null;
 
@@ -123,6 +131,7 @@ function Sidebar({ view, courseCount, mobileOpen, onView, onClose, onUtility }: 
     { id: "courses" as const, label: "My courses", icon: Library, badge: String(courseCount) },
     { id: "course" as const, label: "Learning room", icon: BookOpen },
     { id: "ai-lab" as const, label: "AI studio", icon: Sparkles, badge: "New" },
+    { id: "history" as const, label: "Learning history", icon: History },
   ];
   return (
     <aside className={`sidebar ${mobileOpen ? "sidebar-open" : ""}`}>
@@ -183,6 +192,7 @@ function UploadModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
   const [stage, setStage] = useState<UploadStage>("idle");
   const [file, setFile] = useState<File | null>(null);
   const [depth, setDepth] = useState<"quick" | "balanced" | "mastery">("balanced");
+  const [language, setLanguage] = useState("en");
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState("");
   const [generated, setGenerated] = useState<CourseDetail | null>(null);
@@ -206,7 +216,7 @@ function UploadModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
       const document = await coursecraftApi.uploadDocument(file);
       setProgress(52);
       setStage("generating");
-      const course = await coursecraftApi.generateCourse(document.id, depth);
+      const course = await coursecraftApi.generateCourse(document.id, depth, language);
       setProgress(100);
       setGenerated(course);
       setStage("ready");
@@ -246,6 +256,7 @@ function UploadModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
               ["mastery", GraduationCap, "Deep mastery", "Detailed, rigorous coverage"],
             ] as const).map(([id, Icon, title, note]) => <button key={id} className={depth === id ? "selected" : ""} onClick={() => setDepth(id)}><Icon size={16} /><span><strong>{title}</strong><small>{note}</small></span>{depth === id && <Check size={15} />}</button>)}
           </div>
+          <label className="language-select"><Languages size={16} /><span><strong>Course language</strong><small>Generate every lesson and study tool in your preferred language.</small></span><select aria-label="Course language" value={language} onChange={(event) => setLanguage(event.target.value)}><option value="en">English</option><option value="hi">Hindi</option><option value="es">Spanish</option><option value="fr">French</option><option value="de">German</option><option value="ja">Japanese</option></select></label>
           {error && <div className="inline-error"><AlertTriangle size={15} />{error}</div>}
           <button className="primary-button wide" onClick={generate}><Sparkles size={16} /> Generate course</button>
           <button className="text-button" onClick={() => { setFile(null); setStage("idle"); }}>Choose another file</button>
@@ -289,8 +300,8 @@ function CoursesView({ courses, filter, onOpenCourse, onUpload, onDelete }: { co
 function QuizModal({ chapter, onClose, onSaved }: { chapter: Chapter; onClose: () => void; onSaved: () => void }) {
   const [quiz, setQuiz] = useState<QuizPayload | null>(null);
   const [index, setIndex] = useState(0);
-  const [selected, setSelected] = useState<number | null>(null);
-  const [answers, setAnswers] = useState<Array<{ question_id: string; answer: number }>>([]);
+  const [selected, setSelected] = useState<number | string | null>(null);
+  const [answers, setAnswers] = useState<Array<{ question_id: string; answer: number | string }>>([]);
   const [score, setScore] = useState(0);
   const [complete, setComplete] = useState(false);
   const [error, setError] = useState("");
@@ -298,9 +309,13 @@ function QuizModal({ chapter, onClose, onSaved }: { chapter: Chapter; onClose: (
 
   useEffect(() => { coursecraftApi.generateQuiz(chapter.id, 5).then(setQuiz).catch((caught) => setError(messageFrom(caught))); }, [chapter.id]);
   const submit = async () => {
-    if (!quiz || selected === null) return;
+    if (!quiz || selected === null || selected === "") return;
     const item = quiz.questions[index];
-    const nextScore = score + (selected === item.answer ? 1 : 0);
+    const normalized = String(selected).trim().toLowerCase();
+    const correct = item.format === "short_answer"
+      ? [String(item.answer), ...(item.accepted_answers ?? [])].some((answer) => normalized.includes(answer.toLowerCase()) || answer.toLowerCase().includes(normalized))
+      : selected === item.answer;
+    const nextScore = score + (correct ? 1 : 0);
     const nextAnswers = [...answers, { question_id: item.id, answer: selected }];
     setScore(nextScore);
     setAnswers(nextAnswers);
@@ -310,7 +325,8 @@ function QuizModal({ chapter, onClose, onSaved }: { chapter: Chapter; onClose: (
     catch (caught) { setError(messageFrom(caught)); }
     finally { setSaving(false); }
   };
-  return <div className="modal-backdrop"><section className="quiz-modal" role="dialog" aria-modal="true" aria-labelledby="quiz-title"><div className="modal-head"><div><span className="eyebrow">{chapter.title} · checkpoint</span><h2 id="quiz-title">Knowledge check</h2></div><button className="icon-button" onClick={onClose} aria-label="Close quiz"><X size={19} /></button></div>{error && <div className="inline-error"><AlertTriangle size={15} />{error}</div>}{!quiz && !error && <div className="loading-state"><LoaderCircle className="spin" /><span>Preparing source-aware questions…</span></div>}{quiz && !complete && <><div className="quiz-progress"><span style={{ width: `${((index + 1) / quiz.questions.length) * 100}%` }} /></div><div className="quiz-count">Question {index + 1} of {quiz.questions.length}</div><h3>{quiz.questions[index].question}</h3><div className="quiz-options">{quiz.questions[index].options.map((option, optionIndex) => <button key={`${option}-${optionIndex}`} className={selected === optionIndex ? "selected" : ""} onClick={() => setSelected(optionIndex)}><span>{String.fromCharCode(65 + optionIndex)}</span>{option}{selected === optionIndex && <Check size={15} />}</button>)}</div><button className="primary-button wide" disabled={selected === null || saving} onClick={submit}>{saving ? <LoaderCircle className="spin" size={15} /> : index === quiz.questions.length - 1 ? "Finish checkpoint" : "Next question"}<ArrowRight size={15} /></button></>}{quiz && complete && <div className="quiz-complete"><div className="score-ring"><strong>{Math.round((score / quiz.questions.length) * 100)}%</strong><span>score</span></div><span className="eyebrow">Checkpoint saved</span><h3>{score >= quiz.questions.length * 0.7 ? "Strong work." : "Keep building."}</h3><p>Your attempt is recorded. Revisit the source-backed lesson takeaways before your next try.</p><div><button className="ghost-button" onClick={() => { setIndex(0); setSelected(null); setScore(0); setAnswers([]); setComplete(false); }}>Try again</button><button className="primary-button" onClick={onClose}>Continue learning <ArrowRight size={15} /></button></div></div>}</section></div>;
+  const current = quiz?.questions[index];
+  return <div className="modal-backdrop"><section className="quiz-modal" role="dialog" aria-modal="true" aria-labelledby="quiz-title"><div className="modal-head"><div><span className="eyebrow">{chapter.title} · checkpoint</span><h2 id="quiz-title">Knowledge check</h2></div><button className="icon-button" onClick={onClose} aria-label="Close quiz"><X size={19} /></button></div>{error && <div className="inline-error"><AlertTriangle size={15} />{error}</div>}{!quiz && !error && <div className="loading-state"><LoaderCircle className="spin" /><span>Preparing source-aware questions…</span></div>}{quiz && current && !complete && <><div className="quiz-progress"><span style={{ width: `${((index + 1) / quiz.questions.length) * 100}%` }} /></div><div className="quiz-count">Question {index + 1} of {quiz.questions.length} · {current.format.replace("_", " ")}</div><h3>{current.question}</h3>{current.format === "short_answer" ? <textarea className="short-answer" aria-label="Short answer" placeholder="Answer in a phrase or sentence…" value={typeof selected === "string" ? selected : ""} onChange={(event) => setSelected(event.target.value)} /> : <div className="quiz-options">{current.options.map((option, optionIndex) => <button key={`${option}-${optionIndex}`} className={selected === optionIndex ? "selected" : ""} onClick={() => setSelected(optionIndex)}><span>{String.fromCharCode(65 + optionIndex)}</span>{option}{selected === optionIndex && <Check size={15} />}</button>)}</div>}<button className="primary-button wide" disabled={selected === null || selected === "" || saving} onClick={submit}>{saving ? <LoaderCircle className="spin" size={15} /> : index === quiz.questions.length - 1 ? "Finish checkpoint" : "Next question"}<ArrowRight size={15} /></button></>}{quiz && complete && <div className="quiz-complete"><div className="score-ring"><strong>{Math.round((score / quiz.questions.length) * 100)}%</strong><span>score</span></div><span className="eyebrow">Checkpoint saved</span><h3>{score >= quiz.questions.length * 0.7 ? "Strong work." : "Keep building."}</h3><p>Your attempt is recorded with the answer review below.</p><div className="answer-review">{quiz.questions.map((question, questionIndex) => <article key={question.id}><strong>{questionIndex + 1}. {question.question}</strong><span>Your answer: {String(answers[questionIndex]?.answer ?? "—")}</span><span>Correct answer: {typeof question.answer === "number" ? question.options[question.answer] : question.answer}</span><p>{question.explanation}</p></article>)}</div><div><button className="ghost-button" onClick={() => { setIndex(0); setSelected(null); setScore(0); setAnswers([]); setComplete(false); }}>Try again</button><button className="primary-button" onClick={onClose}>Continue learning <ArrowRight size={15} /></button></div></div>}</section></div>;
 }
 
 function MarkdownContent({ value }: { value: string }) {
@@ -320,7 +336,7 @@ function MarkdownContent({ value }: { value: string }) {
     if (clean.startsWith("### ")) return <h3 key={index}>{clean.slice(4)}</h3>;
     if (clean.startsWith("## ")) return <h2 key={index}>{clean.slice(3)}</h2>;
     if (clean.startsWith("# ")) return <h2 key={index}>{clean.slice(2)}</h2>;
-    if (clean.split("\n").every((line) => line.trim().startsWith("- "))) return <ul key={index}>{clean.split("\n").map((line) => <li key={line}>{line.trim().slice(2)}</li>)}</ul>;
+    if (clean.split("\n").every((line) => line.trim().startsWith("- "))) return <ul key={index}>{clean.split("\n").map((line) => <li key={line}>{line.trim().slice(2).replace(/\*\*/g, "")}</li>)}</ul>;
     return <p key={index}>{clean.replace(/\*\*/g, "")}</p>;
   })}</>;
 }
@@ -372,8 +388,16 @@ function CourseView({ course, onBack, onCourseChange, onMetricsChange }: { cours
     setMessages((current) => [...current, userMessage]);
     setSending(true);
     try {
-      const response = await coursecraftApi.chat(course.id, prompt, messages.slice(-8).map((item) => ({ role: item.role, content: item.text })), lesson.id);
-      setMessages((current) => [...current, { role: "assistant", text: response.answer, citations: response.citations }]);
+      let started = false;
+      const response = await coursecraftApi.streamChat(course.id, prompt, messages.slice(-8).map((item) => ({ role: item.role, content: item.text })), lesson.id, (token) => {
+        setMessages((current) => {
+          if (!started) { started = true; return [...current, { role: "assistant", text: token }]; }
+          return current.map((item, itemIndex) => itemIndex === current.length - 1 ? { ...item, text: item.text + token } : item);
+        });
+      });
+      setMessages((current) => started
+        ? current.map((item, itemIndex) => itemIndex === current.length - 1 ? { ...item, text: response.answer || item.text, citations: response.citations } : item)
+        : [...current, { role: "assistant", text: response.answer, citations: response.citations }]);
     } catch (caught) { setChatError(messageFrom(caught)); }
     finally { setSending(false); }
   };
@@ -396,38 +420,43 @@ function FlashcardModal({ cards, onClose }: { cards: Flashcard[]; onClose: () =>
   return <div className="modal-backdrop"><section className="utility-modal flashcard-modal" role="dialog" aria-modal="true" aria-labelledby="flashcard-title"><div className="modal-head"><div><span className="eyebrow">Smart flashcards · {index + 1} of {cards.length}</span><h2 id="flashcard-title">Recall before reveal</h2></div><button className="icon-button" onClick={onClose} aria-label="Close flashcards"><X size={18} /></button></div><button className={`flashcard ${flipped ? "flipped" : ""}`} onClick={() => setFlipped((value) => !value)}><span>{flipped ? "Answer" : "Prompt"}</span><strong>{flipped ? card.back : card.front}</strong><small>{flipped && card.source_pages.length ? `Source pages ${card.source_pages.join(", ")}` : "Click to flip"}</small></button><div className="flashcard-actions"><button disabled={index === 0} onClick={() => { setIndex((value) => value - 1); setFlipped(false); }}><ArrowLeft size={15} /> Previous</button><button disabled={index === cards.length - 1} onClick={() => { setIndex((value) => value + 1); setFlipped(false); }}>Next <ArrowRight size={15} /></button></div></section></div>;
 }
 
+type StudioArtifact = { kind: "summary"; value: CourseSummaryTool } | { kind: "mind-map"; value: MindMap } | { kind: "diagram"; value: CourseDiagram };
+
+function StudioArtifactModal({ artifact, onClose }: { artifact: StudioArtifact; onClose: () => void }) {
+  return <div className="modal-backdrop"><section className="utility-modal artifact-modal" role="dialog" aria-modal="true" aria-labelledby="artifact-title"><div className="modal-head"><div><span className="eyebrow">AI-generated study artifact</span><h2 id="artifact-title">{artifact.value.title}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close artifact"><X size={18} /></button></div>{artifact.kind === "summary" && <div className="artifact-markdown"><MarkdownContent value={artifact.value.markdown} /><div className="source-strip"><FileText size={15} /> Grounded across pages <strong>{artifact.value.source_pages.join(", ") || "course sources"}</strong></div></div>}{artifact.kind === "mind-map" && <div className="mind-map" aria-label="AI mind map">{artifact.value.nodes.map((node) => <div key={node.id} className={node.kind}><span>{node.kind}</span><strong>{node.label}</strong></div>)}</div>}{artifact.kind === "diagram" && <div className="course-diagram" aria-label="AI learning progression">{artifact.value.steps.map((step, index) => <div key={step.id}><article><span>{String(index + 1).padStart(2, "0")}</span><strong>{step.label}</strong><p>{step.detail}</p></article>{index < artifact.value.steps.length - 1 && <ArrowRight size={18} />}</div>)}</div>}<button className="primary-button wide" onClick={onClose}>Done</button></section></div>;
+}
+
 function AiLab({ courses, onOpenCourse }: { courses: CourseSummary[]; onOpenCourse: (course: CourseSummary) => void }) {
   const [query, setQuery] = useState("");
   const [answer, setAnswer] = useState<ChatResponse | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState("");
   const [error, setError] = useState("");
   const [cards, setCards] = useState<Flashcard[]>([]);
-  const [plan, setPlan] = useState(false);
+  const [artifact, setArtifact] = useState<StudioArtifact | null>(null);
   const primary = courses[0];
-  const ask = async (prompt = query) => {
-    if (!primary || !prompt.trim()) return;
-    setQuery(prompt);
-    setLoading(true);
-    setError("");
-    try { setAnswer(await coursecraftApi.chat(primary.id, prompt, [])); }
-    catch (caught) { setError(messageFrom(caught)); }
-    finally { setLoading(false); }
-  };
-  const flashcards = async () => {
-    if (!primary) return;
-    setLoading(true);
-    setError("");
-    try { setCards((await coursecraftApi.flashcards(primary.id, undefined, 10)).cards); }
-    catch (caught) { setError(messageFrom(caught)); }
-    finally { setLoading(false); }
-  };
-  const speak = async () => {
-    if (!primary || typeof window === "undefined" || !("speechSynthesis" in window)) return setError("Audio playback is not supported in this browser.");
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(new SpeechSynthesisUtterance(`${primary.title}. ${primary.description}`));
-  };
-  if (!courses.length) return <main className="page ai-lab-page"><EmptyLibrary onUpload={() => undefined} /></main>;
-  return <main className="page ai-lab-page"><section className="ai-hero"><div className="ai-orb"><Sparkles size={30} /></div><span className="eyebrow">AI studio · {primary.title}</span><h1>Your source material,<br />one conversation away.</h1><p>Ask grounded questions, create flashcards, simplify difficult material, or build a focused revision plan.</p><div className="ai-query"><Search size={19} /><input aria-label="Ask your library" placeholder="Ask anything about your active course…" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void ask(); }} /><button disabled={!query.trim() || loading} onClick={() => void ask()}>{loading ? <LoaderCircle className="spin" size={17} /> : <ArrowRight size={17} />}</button></div><div className="ai-suggestions"><button onClick={() => void ask("Compare the most important ideas in this course")}>Compare key ideas</button><button onClick={() => setPlan(true)}>Plan a 30-minute review</button><button onClick={() => void ask("Which concepts are most likely to be misunderstood, and why?")}>Find difficult concepts</button></div>{error && <div className="inline-error"><AlertTriangle size={15} />{error}</div>}{answer && <div className="studio-answer"><Sparkles size={18} /><div><span className="eyebrow">Grounded response</span><p>{answer.answer}</p><div className="chat-citations">{answer.citations.map((citation) => <button key={`${citation.page}-${citation.excerpt}`} title={citation.excerpt}>p. {citation.page}</button>)}</div></div></div>}</section><section className="studio-tools"><div className="section-head"><div><span className="eyebrow">One-click workflows</span><h2>Study smarter</h2></div></div><div className="tool-grid"><article><span><NotebookPen size={19} /></span><h3>Smart flashcards</h3><p>Create a source-cited recall deck from your current course.</p><button onClick={() => void flashcards()}>Generate deck <ArrowRight size={14} /></button></article><article><span><Languages size={19} /></span><h3>Translate & simplify</h3><p>Rewrite difficult material at a clearer level while preserving meaning.</p><button onClick={() => void ask("Explain the core material in simple language for a beginner")}>Simplify course <ArrowRight size={14} /></button></article><article><span><Headphones size={19} /></span><h3>Audio overview</h3><p>Listen to a concise spoken introduction to the active course.</p><button onClick={() => void speak()}><Volume2 size={14} /> Play overview</button></article><article><span><Trophy size={19} /></span><h3>Exam sprint</h3><p>Build a focused thirty-minute revision sequence from your course.</p><button onClick={() => setPlan(true)}>Start a sprint <ArrowRight size={14} /></button></article></div></section><section className="recent-context"><div className="section-head"><div><span className="eyebrow">Available context</span><h2>Your connected courses</h2></div></div>{courses.slice(0, 3).map((course, index) => <button key={course.id} onClick={() => onOpenCourse(course)}><CourseCover course={course} compact index={index} /><div><span>{course.filename || "Source PDF"}</span><strong>{course.title}</strong></div><span>{course.lesson_count} lessons</span><ArrowRight size={16} /></button>)}</section>{cards.length > 0 && <FlashcardModal cards={cards} onClose={() => setCards([])} />}{plan && <div className="modal-backdrop"><section className="utility-modal sprint-modal" role="dialog" aria-modal="true" aria-labelledby="sprint-title"><div className="modal-head"><div><span className="eyebrow">Exam sprint</span><h2 id="sprint-title">Your 30-minute review</h2></div><button className="icon-button" onClick={() => setPlan(false)} aria-label="Close sprint"><X size={18} /></button></div><ol><li><strong>8 min · Recall</strong><span>Review the course objectives without looking at the lessons.</span></li><li><strong>12 min · Rebuild</strong><span>Explain the hardest chapter in your own words.</span></li><li><strong>7 min · Test</strong><span>Take a source-grounded chapter checkpoint.</span></li><li><strong>3 min · Close</strong><span>Write one unresolved question for the companion.</span></li></ol><button className="primary-button wide" onClick={() => { setPlan(false); onOpenCourse(primary); }}>Open learning room <ArrowRight size={15} /></button></section></div>}</main>;
+  const run = async (label: string, action: () => Promise<void>) => { setLoading(label); setError(""); try { await action(); } catch (caught) { setError(messageFrom(caught)); } finally { setLoading(""); } };
+  const ask = async (prompt = query) => { if (!primary || !prompt.trim()) return; setQuery(prompt); await run("ask", async () => setAnswer(await coursecraftApi.chat(primary.id, prompt, []))); };
+  const speak = () => { if (!primary || !("speechSynthesis" in window)) return setError("Audio narration is not supported in this browser."); window.speechSynthesis.cancel(); const speech = new SpeechSynthesisUtterance(`${primary.title}. ${primary.description}. Learning objectives: ${primary.objectives.join(". ")}`); speech.rate = 0.92; window.speechSynthesis.speak(speech); };
+  if (!primary) return <main className="page ai-lab-page"><EmptyLibrary onUpload={() => undefined} /></main>;
+  const tools = [
+    ["flashcards", NotebookPen, "Smart flashcards", "Source-cited recall cards", () => run("flashcards", async () => setCards((await coursecraftApi.flashcards(primary.id)).cards))],
+    ["summary", FileText, "PDF summarization", "Executive summary with source pages", () => run("summary", async () => setArtifact({ kind: "summary", value: await coursecraftApi.summarize(primary.id) }))],
+    ["mind-map", GitBranch, "AI mind map", "Visual hierarchy of chapters and lessons", () => run("mind-map", async () => setArtifact({ kind: "mind-map", value: await coursecraftApi.mindMap(primary.id) }))],
+    ["diagram", Sparkles, "AI diagram", "Learning progression from the source", () => run("diagram", async () => setArtifact({ kind: "diagram", value: await coursecraftApi.diagram(primary.id) }))],
+    ["audio", Headphones, "Audio narration", "Browser-native course overview", async () => speak()],
+    ["translate", Languages, "Multi-language tutor", "Translate while preserving meaning", () => ask("Explain the key ideas in Hindi, then provide the English terminology in parentheses")],
+    ["sprint", Trophy, "Exam sprint", "Generate a focused 30-minute revision plan", () => ask("Build a focused 30-minute exam revision plan from this course")],
+    ["export", Download, "Course export", "Download Markdown or structured JSON", () => run("export", () => coursecraftApi.exportCourse(primary.id, "markdown"))],
+    ["certificate", Award, "Completion certificate", primary.progress_percent === 100 ? "Download your verified PDF certificate" : `Locked until 100% complete · ${primary.progress_percent}% now`, () => run("certificate", () => coursecraftApi.certificate(primary.id))],
+  ] as const;
+  return <main className="page ai-lab-page"><section className="ai-hero"><div className="ai-orb"><Sparkles size={30} /></div><span className="eyebrow">AI studio · {primary.title}</span><h1>Your source material,<br />one conversation away.</h1><p>RAG, semantic retrieval, streaming answers, and a persistent vector index keep every tool grounded in your PDF.</p><div className="capability-badges"><span>RAG grounded</span><span>Semantic search</span><span>Vector index</span><span>Markdown</span><span>Dark mode</span></div><div className="ai-query"><Search size={19} /><input aria-label="Ask your library" placeholder="Ask anything about your active course…" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void ask(); }} /><button disabled={!query.trim() || Boolean(loading)} onClick={() => void ask()}>{loading === "ask" ? <LoaderCircle className="spin" size={17} /> : <ArrowRight size={17} />}</button></div>{error && <div className="inline-error"><AlertTriangle size={15} />{error}</div>}{answer && <div className="studio-answer"><Sparkles size={18} /><div><span className="eyebrow">Grounded response</span><MarkdownContent value={answer.answer} /><div className="chat-citations">{answer.citations.map((citation) => <button key={`${citation.page}-${citation.excerpt}`} title={citation.excerpt}>p. {citation.page}</button>)}</div></div></div>}</section><section className="studio-tools"><div className="section-head"><div><span className="eyebrow">Complete bonus suite</span><h2>Study tools</h2></div><button onClick={() => void coursecraftApi.exportCourse(primary.id, "json")}>Export JSON <Download size={14} /></button></div><div className="tool-grid bonus-grid">{tools.map(([id, Icon, title, note, action]) => <article key={id}><span><Icon size={19} /></span><h3>{title}</h3><p>{note}</p><button disabled={Boolean(loading) || (id === "certificate" && primary.progress_percent < 100)} onClick={() => void action()}>{loading === id ? <LoaderCircle className="spin" size={14} /> : null}{id === "certificate" && primary.progress_percent < 100 ? "Complete course" : "Open tool"} <ArrowRight size={14} /></button></article>)}</div></section><section className="recent-context"><div className="section-head"><div><span className="eyebrow">Available context</span><h2>Your connected courses</h2></div></div>{courses.slice(0, 3).map((course, index) => <button key={course.id} onClick={() => onOpenCourse(course)}><CourseCover course={course} compact index={index} /><div><span>{course.filename || "Source PDF"}</span><strong>{course.title}</strong></div><span>{course.lesson_count} lessons</span><ArrowRight size={16} /></button>)}</section>{cards.length > 0 && <FlashcardModal cards={cards} onClose={() => setCards([])} />}{artifact && <StudioArtifactModal artifact={artifact} onClose={() => setArtifact(null)} />}</main>;
+}
+
+function HistoryView({ onOpenCourse }: { onOpenCourse: (course: CourseSummary) => void }) {
+  const [history, setHistory] = useState<LearningHistory | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => { coursecraftApi.history().then(setHistory).catch((caught) => setError(messageFrom(caught))); }, []);
+  return <main className="page history-page"><section className="welcome-row compact-welcome"><div><span className="eyebrow">Persistent learning record</span><h1>Learning history</h1><p>Your PDFs, courses, progress, conversations, and quiz attempts in one timeline.</p></div></section>{error && <div className="inline-error"><AlertTriangle size={15} />{error}</div>}{!history && !error && <div className="loading-state"><LoaderCircle className="spin" /> Loading history…</div>}{history && <><section className="history-stats"><StatCard icon={FileText} value={String(history.documents.length)} label="PDFs uploaded" note="Processed source documents" tone="violet" /><StatCard icon={BookOpen} value={String(history.courses.length)} label="Courses built" note="Available in your library" tone="cyan" /><StatCard icon={Bot} value={String(history.chat_messages.length)} label="Chat messages" note="Grounded companion history" tone="amber" /><StatCard icon={Trophy} value={String(history.quiz_attempts.length)} label="Quiz attempts" note="Scores are retained" tone="rose" /></section><section className="history-list"><div className="section-head"><div><span className="eyebrow">Recent activity</span><h2>Everything is saved</h2></div></div>{history.quiz_attempts.slice().reverse().slice(0, 5).map((attempt) => <article key={attempt.id}><span><Trophy size={16} /></span><div><strong>Quiz checkpoint · {attempt.percentage}%</strong><small>{relativeDate(attempt.created_at)}</small></div></article>)}{history.chat_messages.slice().reverse().slice(0, 5).map((message) => <article key={message.id}><span><Bot size={16} /></span><div><strong>{message.role === "assistant" ? "Companion response" : "You asked"}</strong><p>{message.content.slice(0, 180)}</p><small>{relativeDate(message.created_at)}</small></div></article>)}{history.courses.map((item) => <button key={item.id} onClick={() => onOpenCourse(item)}><span><BookOpen size={16} /></span><div><strong>{item.title}</strong><small>{item.progress_percent}% complete · {relativeDate(item.updated_at)}</small></div><ArrowRight size={15} /></button>)}</section></>}</main>;
 }
 
 function UtilityModal({ panel, onClose }: { panel: Exclude<UtilityPanel, null>; onClose: () => void }) {
@@ -444,6 +473,11 @@ function ConfirmDelete({ course, onCancel, onConfirm, busy }: { course: CourseSu
   return <div className="modal-backdrop"><section className="utility-modal confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="delete-title"><div className="danger-icon"><Trash2 size={20} /></div><h2 id="delete-title">Delete this course?</h2><p><strong>{course.title}</strong> and its saved progress, chat history, and quiz attempts will be removed from this preview.</p><div className="modal-actions"><button className="ghost-button" onClick={onCancel}>Cancel</button><button className="danger-button" disabled={busy} onClick={onConfirm}>{busy ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />} Delete course</button></div></section></div>;
 }
 
+function SearchResults({ query, results, busy, onOpen }: { query: string; results: SearchResult[]; busy: boolean; onOpen: (result: SearchResult) => void }) {
+  if (query.trim().length < 2) return null;
+  return <section className="search-results" aria-label="Semantic search results"><header><div><span className="eyebrow">Semantic + keyword search</span><strong>{busy ? "Searching your vector index…" : `${results.length} results`}</strong></div>{busy && <LoaderCircle className="spin" size={15} />}</header>{!busy && results.slice(0, 8).map((result) => <button key={`${result.type}-${result.lesson_id || result.chapter_id || result.course_id}`} onClick={() => onOpen(result)}><span className={result.type}>{result.type}</span><div><strong>{result.title}</strong><p>{result.excerpt}</p></div><ArrowRight size={14} /></button>)}{!busy && !results.length && <div className="empty-search"><Search size={20} /><strong>No source matches</strong><p>Try a concept, chapter, lesson, or PDF keyword.</p></div>}</section>;
+}
+
 export function CourseCraftApp() {
   const [view, setView] = useState<View>("dashboard");
   const [courses, setCourses] = useState<CourseSummary[]>([]);
@@ -454,6 +488,8 @@ export function CourseCraftApp() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [filter, setFilter] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchBusy, setSearchBusy] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [utility, setUtility] = useState<UtilityPanel>(null);
   const [deleteTarget, setDeleteTarget] = useState<CourseSummary | null>(null);
@@ -471,12 +507,26 @@ export function CourseCraftApp() {
   };
 
   useEffect(() => {
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const query = new URLSearchParams(window.location.search);
+    const accessToken = hash.get("access_token") || query.get("access_token");
+    if (accessToken) {
+      const session = { access_token: accessToken, refresh_token: hash.get("refresh_token") || query.get("refresh_token"), token_type: "bearer" };
+      window.localStorage.setItem("coursecraft_session", JSON.stringify(session));
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
     void Promise.all([coursecraftApi.listCourses(), coursecraftApi.dashboard()])
       .then(([nextCourses, nextMetrics]) => { setCourses(nextCourses); setMetrics(nextMetrics); })
       .catch((caught) => setError(messageFrom(caught)))
       .finally(() => setLoading(false));
   }, []);
   useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(""), 3200); return () => window.clearTimeout(timer); }, [toast]);
+  useEffect(() => {
+    const query = filter.trim();
+    if (query.length < 2) return;
+    const timer = window.setTimeout(() => { setSearchBusy(true); coursecraftApi.search(query).then((payload) => setSearchResults(payload.results)).catch((caught) => setError(messageFrom(caught))).finally(() => setSearchBusy(false)); }, 250);
+    return () => window.clearTimeout(timer);
+  }, [filter]);
 
   const openCourse = async (selected: CourseSummary) => {
     setError("");
@@ -517,7 +567,7 @@ export function CourseCraftApp() {
   return <div className={`app-shell ${focusMode ? "focus-mode" : ""}`}>
     <Sidebar view={view} courseCount={courses.length} mobileOpen={mobileOpen} onView={navigate} onClose={() => setMobileOpen(false)} onUtility={setUtility} />
     {mobileOpen && <button className="sidebar-scrim" onClick={() => setMobileOpen(false)} aria-label="Close navigation overlay" />}
-    <div className="app-main"><Topbar filter={filter} onMenu={() => setMobileOpen(true)} onSearch={setFilter} focusMode={focusMode} onFocus={() => setFocusMode((value) => !value)} onNotifications={() => setUtility("notifications")} />{error && <div className="global-error"><AlertTriangle size={17} /><span>{error}</span><button onClick={() => void refresh()}><RefreshCw size={14} /> Retry</button></div>}{view === "dashboard" && <Dashboard courses={courses} metrics={metrics} filter={filter} onUpload={() => setUploadOpen(true)} onOpenCourse={(item) => void openCourse(item)} onDelete={setDeleteTarget} />}{view === "courses" && <CoursesView courses={courses} filter={filter} onOpenCourse={(item) => void openCourse(item)} onUpload={() => setUploadOpen(true)} onDelete={setDeleteTarget} />}{view === "ai-lab" && <AiLab courses={courses} onOpenCourse={(item) => void openCourse(item)} />}</div>
+    <div className="app-main"><Topbar filter={filter} onMenu={() => setMobileOpen(true)} onSearch={setFilter} focusMode={focusMode} onFocus={() => setFocusMode((value) => !value)} onNotifications={() => setUtility("notifications")} /><SearchResults query={filter} results={searchResults} busy={searchBusy} onOpen={(result) => { const selected = courses.find((item) => item.id === result.course_id); if (selected) { setFilter(""); void openCourse(selected); } }} />{error && <div className="global-error"><AlertTriangle size={17} /><span>{error}</span><button onClick={() => void refresh()}><RefreshCw size={14} /> Retry</button></div>}{view === "dashboard" && <Dashboard courses={courses} metrics={metrics} filter={filter} onUpload={() => setUploadOpen(true)} onOpenCourse={(item) => void openCourse(item)} onDelete={setDeleteTarget} />}{view === "courses" && <CoursesView courses={courses} filter={filter} onOpenCourse={(item) => void openCourse(item)} onUpload={() => setUploadOpen(true)} onDelete={setDeleteTarget} />}{view === "ai-lab" && <AiLab courses={courses} onOpenCourse={(item) => void openCourse(item)} />}{view === "history" && <HistoryView onOpenCourse={(item) => void openCourse(item)} />}</div>
     {uploadOpen && <UploadModal onClose={() => setUploadOpen(false)} onCreated={created} />}
     {utility && <UtilityModal panel={utility} onClose={() => setUtility(null)} />}
     {deleteTarget && <ConfirmDelete course={deleteTarget} onCancel={() => setDeleteTarget(null)} onConfirm={() => void remove()} busy={deleting} />}

@@ -52,9 +52,33 @@ class AIProvider:
             raise RuntimeError("AI provider request failed") from last_error
 
     async def stream(self, system: str, user: str) -> AsyncIterator[str]:
-        text = await self.complete(system, user)
-        for word in text.split(" "):
-            yield word + " "
+        if self.settings.llm_provider == "demo" or not self.settings.llm_api_key:
+            text = self._demo_response(user, False)
+            for word in text.split(" "):
+                yield word + " "
+            return
+        headers = {"Authorization": f"Bearer {self.settings.llm_api_key}"}
+        if self.settings.llm_provider == "openrouter":
+            headers.update({"HTTP-Referer": self.settings.frontend_url, "X-Title": "CourseCraft"})
+        payload = {
+            "model": self.settings.llm_model,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "temperature": 0.2,
+            "max_tokens": 900,
+            "stream": True,
+        }
+        try:
+            async with httpx.AsyncClient(base_url=self.settings.llm_base_url, timeout=httpx.Timeout(120, connect=15)) as client:
+                async with client.stream("POST", "/chat/completions", headers=headers, json=payload) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data: ") or line == "data: [DONE]":
+                            continue
+                        content = json.loads(line[6:]).get("choices", [{}])[0].get("delta", {}).get("content")
+                        if content:
+                            yield content
+        except (httpx.HTTPError, json.JSONDecodeError) as exc:
+            raise RuntimeError("AI provider stream failed") from exc
 
     @staticmethod
     def _demo_response(user: str, json_mode: bool) -> str:

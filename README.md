@@ -12,7 +12,7 @@ This repository is the submission for the **Full Stack AI Assignment — PDF to 
 - A relational PostgreSQL/Supabase schema with row-level security and pgvector semantic retrieval.
 - Provider-agnostic, OpenAI-compatible AI integration for Groq and OpenRouter.
 - Source-aware responses and page citations to keep AI explanations inspectable.
-- Bonus study modes: flashcards, translation/simplification, audio lessons, exam sprints, summaries, and dark mode.
+- Every requested bonus: RAG, semantic/vector search, flashcards, mind maps, PDF certificates, audio narration, dark mode, PDF summaries, multi-language generation, streaming chat, exports, Markdown, and AI diagrams.
 
 ## Product experience
 
@@ -23,8 +23,9 @@ This repository is the submission for the **Full Stack AI Assignment — PDF to 
 | Course library | Progress, difficulty, time estimates, search, responsive cards |
 | Learning room | Structured outline, rich lesson content, citations, notes, completion state |
 | AI companion | Lesson-aware chat, grounded citations, follow-up prompts, quiz-on-demand |
-| Checkpoints | Multiple choice flow, scoring, explanations, retry and continue states |
-| AI studio | Cross-library questions, flashcards, translation, audio, revision planning |
+| Checkpoints | MCQ, true/false and short answer, scoring, correct-answer explanations, retry |
+| AI studio | RAG, flashcards, summaries, mind maps, diagrams, translation, audio, export, certificates |
+| History | Uploaded PDFs, courses, progress, chat, and quiz-attempt timeline |
 
 ## Architecture
 
@@ -103,11 +104,17 @@ No secrets are committed. The web experience and API both have deterministic dem
 | `GET` | `/api/v1/courses/{id}` | Return the complete course tree |
 | `PUT` | `/api/v1/progress` | Persist completion, time, and reading position |
 | `POST` | `/api/v1/chat` | Answer from retrieved PDF evidence |
+| `POST` | `/api/v1/chat/stream` | Stream a grounded answer over SSE |
 | `POST` | `/api/v1/quizzes/generate` | Create a chapter checkpoint |
 | `POST` | `/api/v1/quizzes/attempts` | Persist a scored quiz attempt |
 | `GET` | `/api/v1/search` | Search courses, chapters, lessons, and keywords |
 | `GET` | `/api/v1/history` | Return documents, courses, progress, chats, and quizzes |
 | `POST` | `/api/v1/ai/flashcards` | Generate a source-aware flashcard deck |
+| `POST` | `/api/v1/ai/summary` | Create a source-aware executive summary |
+| `POST` | `/api/v1/ai/mind-map` | Create a course mind map |
+| `POST` | `/api/v1/ai/diagram` | Create a learning-progression diagram |
+| `GET` | `/api/v1/courses/{id}/export` | Download Markdown or JSON |
+| `POST` | `/api/v1/courses/{id}/certificate` | Download a completion-gated PDF certificate |
 | `GET` | `/api/v1/dashboard` | Return learning metrics and recent courses |
 
 ## Quality checks
@@ -121,14 +128,14 @@ cd backend
 pytest
 ```
 
-The frontend includes server-render smoke tests and a health-route test. The backend includes API health, validation, and dashboard tests.
+The frontend has 10 build/contract/SSR tests. The backend has 27 API, AI-tool, vector, streaming, export, certificate, and persistence tests.
 
 ## Deployment plan
 
 - Web: GitHub Pages through `.github/workflows/deploy-pages.yml` and Vinext static export.
 - API: Google Cloud Run using `backend/Dockerfile`, with scale-to-zero, a one-instance ceiling, and `COURSECRAFT_API_URL` configured as a GitHub repository variable.
-- Preview persistence: a private Google Cloud Storage object accessed only by the Cloud Run service account.
-- Database, Auth, Storage, vector search: Supabase.
+- Hosted persistence: Cloud Firestore metadata plus a private Google Cloud Storage source/vector object, both restricted to the Cloud Run service account.
+- Auth: Supabase OAuth/email. The production SQL migration includes PostgreSQL, pgvector, RLS, and Storage policies.
 - AI: Groq for fast inference, with OpenRouter as a drop-in alternative.
 
 The deployment workflow keeps frontend configuration in GitHub repository variables and the Groq key in Google Secret Manager. No server-side secret is bundled into the GitHub Pages app.
@@ -136,3 +143,5 @@ The deployment workflow keeps frontend configuration in GitHub repository variab
 ## Demo presentation
 
 Use [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) for a concise 6–8 minute walkthrough that covers every required evaluation area without losing the narrative.
+
+The exact brief audit is in [docs/REQUIREMENTS_MATRIX.md](docs/REQUIREMENTS_MATRIX.md), and the handoff list is in [docs/SUBMISSION_CHECKLIST.md](docs/SUBMISSION_CHECKLIST.md).

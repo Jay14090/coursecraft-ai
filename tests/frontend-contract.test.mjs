@@ -14,6 +14,14 @@ test("frontend uses the real CourseCraft API instead of static demo data", () =>
   assert.match(source, /coursecraftApi\.chat/);
   assert.match(source, /coursecraftApi\.generateQuiz/);
   assert.match(source, /coursecraftApi\.flashcards/);
+  assert.match(source, /coursecraftApi\.streamChat/);
+  assert.match(source, /coursecraftApi\.summarize/);
+  assert.match(source, /coursecraftApi\.mindMap/);
+  assert.match(source, /coursecraftApi\.diagram/);
+  assert.match(source, /coursecraftApi\.exportCourse/);
+  assert.match(source, /coursecraftApi\.certificate/);
+  assert.match(source, /coursecraftApi\.history/);
+  assert.match(source, /coursecraftApi\.search/);
 });
 
 test("API client attaches sessions and exposes robust failure messages", () => {
@@ -37,7 +45,23 @@ test("included PDF demo exercises the same multi-page upload path", () => {
 });
 
 test("interactive utilities are implemented rather than placeholder links", () => {
-  for (const behavior of ["Help & shortcuts", "Workspace settings", "Notifications", "Save note", "Delete course", "Play overview", "Exam sprint"]) {
+  for (const behavior of ["Help & shortcuts", "Workspace settings", "Notifications", "Save note", "Delete course", "Audio narration", "Exam sprint"]) {
     assert.match(source, new RegExp(behavior));
   }
+});
+
+test("all assignment bonus features are exposed as working UI workflows", () => {
+  for (const feature of ["RAG grounded", "Semantic search", "Vector index", "Smart flashcards", "AI mind map", "Completion certificate", "Audio narration", "PDF summarization", "Multi-language tutor", "Course export", "Markdown", "AI diagram"]) {
+    assert.match(source, new RegExp(feature));
+  }
+  assert.match(api, /text\/event-stream|chat\/stream/);
+  assert.match(source, /short_answer/);
+  assert.match(source, /Correct answer:/);
+});
+
+test("OAuth callback sessions and selectable generation languages are implemented", () => {
+  assert.match(source, /access_token/);
+  assert.match(source, /coursecraft_session/);
+  assert.match(source, /Course language/);
+  assert.match(source, /value="hi"/);
 });

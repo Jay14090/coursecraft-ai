@@ -26,7 +26,7 @@ class ChatRequest(BaseModel):
 class QuizRequest(BaseModel):
     chapter_id: str
     question_count: int = Field(default=5, ge=3, le=15)
-    formats: list[Literal["multiple_choice", "true_false", "short_answer"]] = Field(default_factory=lambda: ["multiple_choice", "true_false"])
+    formats: list[Literal["multiple_choice", "true_false", "short_answer"]] = Field(default_factory=lambda: ["multiple_choice", "true_false", "short_answer"], min_length=1)
 
 
 class QuizAttemptRequest(BaseModel):
@@ -42,8 +42,17 @@ class FlashcardRequest(BaseModel):
     count: int = Field(default=10, ge=5, le=30)
 
 
+class CourseToolRequest(BaseModel):
+    course_id: str
+
+
+class CertificateRequest(BaseModel):
+    learner_name: str | None = Field(default=None, max_length=80)
+
+
 class HealthResponse(BaseModel):
     status: Literal["healthy"]
     service: str
     mode: str
     ai_provider: str
+    persistence: str

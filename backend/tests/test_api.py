@@ -50,6 +50,7 @@ def test_health_reports_preview_and_ai_provider() -> None:
         "service": "CourseCraft API",
         "mode": "preview",
         "ai_provider": "demo",
+        "persistence": "local",
     }
 
 
@@ -268,3 +269,91 @@ def test_cloud_preview_repository_survives_a_serverless_restart() -> None:
     restored = restarted.get_document(created["id"], "demo-user")
     assert restored is not None
     assert restored["filename"] == "cloud-persistent.pdf"
+
+
+def test_upload_builds_vector_embeddings_for_semantic_rag() -> None:
+    response = client.post(
+        "/api/v1/documents",
+        files={"file": ("vectors.pdf", make_pdf("Neural retrieval connects meaning with evidence."), "application/pdf")},
+    )
+    assert response.status_code == 201
+    stored = demo_store.get_document(response.json()["id"], "demo-user")
+    assert stored is not None
+    assert len(stored["chunks"][0]["embedding"]) == 192
+    assert any(value != 0 for value in stored["chunks"][0]["embedding"])
+
+
+def test_semantic_search_indexes_courses_chapters_and_lessons() -> None:
+    response = client.get("/api/v1/search", params={"q": "grounded retrieval"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "semantic+keyword"
+    assert {item["type"] for item in payload["results"]} >= {"course", "chapter", "lesson"}
+    assert payload["results"] == sorted(payload["results"], key=lambda item: item["score"], reverse=True)
+
+
+def test_quiz_includes_mcq_true_false_and_short_answer_with_review_data() -> None:
+    chapter = first_course_detail()["chapters"][0]
+    response = client.post("/api/v1/quizzes/generate", json={"chapter_id": chapter["id"], "question_count": 5})
+    assert response.status_code == 200
+    questions = response.json()["questions"]
+    assert {item["format"] for item in questions} == {"multiple_choice", "true_false", "short_answer"}
+    short_answer = next(item for item in questions if item["format"] == "short_answer")
+    assert short_answer["answer"] == "source citations"
+    assert short_answer["accepted_answers"]
+    assert short_answer["explanation"]
+
+
+def test_streaming_chat_emits_tokens_and_persists_complete_message() -> None:
+    course = first_course()
+    response = client.post("/api/v1/chat/stream", json={"course_id": course["id"], "message": "Explain retrieval", "history": []})
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: token" in response.text
+    assert "event: complete" in response.text
+    messages = client.get(f"/api/v1/courses/{course['id']}/messages").json()
+    assert [message["role"] for message in messages[-2:]] == ["user", "assistant"]
+
+
+def test_complete_bonus_tool_suite_and_exports() -> None:
+    course = first_course_detail()
+    course_id = course["id"]
+    for endpoint, key in [("summary", "markdown"), ("mind-map", "nodes"), ("diagram", "steps")]:
+        response = client.post(f"/api/v1/ai/{endpoint}", json={"course_id": course_id})
+        assert response.status_code == 200
+        assert response.json()[key]
+    markdown = client.get(f"/api/v1/courses/{course_id}/export", params={"format": "markdown"})
+    assert markdown.status_code == 200
+    assert markdown.headers["content-type"].startswith("text/markdown")
+    assert course["title"] in markdown.text
+    exported_json = client.get(f"/api/v1/courses/{course_id}/export", params={"format": "json"})
+    assert exported_json.status_code == 200
+    assert exported_json.json()["id"] == course_id
+
+
+def test_certificate_is_locked_then_downloads_as_valid_pdf_at_completion() -> None:
+    course = first_course_detail()
+    locked = client.post(f"/api/v1/courses/{course['id']}/certificate", json={"learner_name": "Jay"})
+    assert locked.status_code == 409
+    for chapter in course["chapters"]:
+        for lesson in chapter["lessons"]:
+            assert client.put("/api/v1/progress", json={"lesson_id": lesson["id"], "completed": True}).status_code == 200
+    certificate = client.post(f"/api/v1/courses/{course['id']}/certificate", json={"learner_name": "Jay Chhichhia"})
+    assert certificate.status_code == 200
+    assert certificate.headers["content-type"] == "application/pdf"
+    assert certificate.content.startswith(b"%PDF")
+
+
+def test_firestore_mirror_excludes_raw_pdf_text_and_vectors() -> None:
+    class MemoryDocument:
+        payload: dict | None = None
+
+        def set(self, payload: dict) -> None:
+            self.payload = payload
+
+    document = MemoryDocument()
+    store = DemoStore()
+    store.configure_firestore_document(document)
+    assert document.payload is not None
+    assert all("text" not in item and "chunks" not in item for item in document.payload["documents"].values())
+    assert document.payload["courses"]
