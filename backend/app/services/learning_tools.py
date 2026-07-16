@@ -22,9 +22,9 @@ def summarize_course(course: dict) -> dict:
     markdown = "\n\n".join([
         f"# {course['title']} — executive summary",
         course.get("description", ""),
-        "## Chapter map\n" + "\n".join(f"- {line}" for line in chapter_lines),
-        "## Essential takeaways\n" + "\n".join(f"- {item}" for item in takeaways),
-        "## Recommended next step\nComplete the next unfinished lesson, then use a chapter quiz to check recall.",
+        "## Chapter map\n\n" + "\n".join(f"- {line}" for line in chapter_lines),
+        "## Essential takeaways\n\n" + "\n".join(f"- {item}" for item in takeaways),
+        "## Recommended next step\n\nComplete the next unfinished lesson, then use a chapter quiz to check recall.",
     ])
     return {"course_id": course["id"], "title": f"{course['title']} summary", "markdown": markdown, "source_pages": pages[:20]}
 
