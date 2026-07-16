@@ -51,6 +51,6 @@
 - [x] Lint passes.
 - [x] Production frontend build passes.
 - [x] Live API acceptance test passes after the latest deployment (19/19 checks).
-- [ ] Live GitHub Pages acceptance test passes after the latest deployment.
-- [ ] Confirm no secret appears in the Git diff, repository, or frontend bundle.
+- [x] Live GitHub Pages acceptance passes: dashboard, auth screen, semantic search, history, AI studio, and generated summary were verified in-browser.
+- [x] Confirmed no credential pattern appears in the Git diff or repository; server secrets remain in Google Secret Manager.
 - [ ] Put the four final links and demo video in the Unstop submission form.
